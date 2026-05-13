@@ -66,6 +66,13 @@ const phases = [
     sections: ["自分で考えたこと", "まず自分で考えたこと", "学習中に出た仮説", "学習者の仮説・考え", "考察"],
   },
   {
+    key: "check",
+    label: "確認",
+    friendly: "本当に使えるか試した？",
+    hint: "確認問題、類題、復習予定など、次の行動につながっているか。",
+    sections: ["類題・確認問題の結果", "確認問題の結果", "次の確認問題", "次回復習すること", "次回復習日"],
+  },
+  {
     key: "shift",
     label: "考え直し",
     friendly: "どこで見方が変わった？",
@@ -81,19 +88,61 @@ const phases = [
   },
   {
     key: "criteria",
-    label: "使い方",
+    label: "次に使う",
     friendly: "次はどう見分ける？",
     hint: "次に似た問題を見たとき、何を確認すればよいかがあるか。",
     sections: ["次に使える判断基準", "科学的な見地から見た注意点"],
   },
+];
+
+const loopSteps = [
+  {
+    key: "question",
+    label: "問い",
+    prompt: "何が知りたい？",
+    empty: "まだ「何が知りたいか」が一文で残っていません。",
+    headings: ["問い", "問題提起", "わからなかったこと", "わからないこと", "確認したいこと", "レポートテーマ"],
+  },
+  {
+    key: "hypothesis",
+    label: "予想",
+    prompt: "自分ではどう考えた？",
+    empty: "答えを見る前の予想や、自分なりの説明がまだ少ないです。",
+    headings: ["予想", "学習者の仮説・考え", "自分で考えたこと", "まず自分で考えたこと", "学習中に出た仮説", "最初の理解"],
+  },
   {
     key: "check",
     label: "確認",
-    friendly: "本当に使えるか試した？",
-    hint: "確認問題、類題、復習予定など、次の行動につながっているか。",
-    sections: ["類題・確認問題の結果", "確認問題の結果", "次の確認問題", "次回復習すること", "次回復習日"],
+    prompt: "何を見て確かめた？",
+    empty: "何を根拠に確かめたかがまだはっきりしていません。",
+    headings: ["確認", "根拠確認", "根拠確認の結果", "Codexの整理", "回答", "追加説明", "確認問題の結果", "類題・確認問題の結果", "次の確認問題"],
+  },
+  {
+    key: "shift",
+    label: "考え直し",
+    prompt: "どこを直した？",
+    empty: "最初の考えから、どこを直したのかがまだ読み取りにくいです。",
+    headings: ["考え直し", "思考の変化", "学習者の理解更新", "解き直し・説明", "間違いの原因", "誤解しやすい点"],
+  },
+  {
+    key: "insight",
+    label: "気づき",
+    prompt: "何がわかった？",
+    empty: "新しく説明できるようになったことを、もう一文で残すとよくなります。",
+    headings: ["気づき", "得た知見", "なるほどポイント", "今日できるようになったこと", "結論", "提出用の最終文"],
+  },
+  {
+    key: "future",
+    label: "次に使う",
+    prompt: "次は何に使う？",
+    empty: "次に似た問題で使う見分け方や復習予定がまだ少ないです。",
+    headings: ["次に使う", "これから使う", "次に使える判断基準", "次回復習すること", "次回復習日", "次回復習", "次の課題候補", "まだ不安なこと"],
   },
 ];
+
+const loopHeadingAliases = new Map(
+  loopSteps.flatMap((step) => step.headings.map((heading) => [normalizeHeading(heading), step.key])),
+);
 
 function parseArgs(argv) {
   const args = {};
@@ -117,6 +166,13 @@ function parseArgs(argv) {
 
 function normalize(value) {
   return String(value ?? "").replace(/\r\n/g, "\n").trim();
+}
+
+function normalizeHeading(value) {
+  return normalize(value)
+    .replace(/^追加説明[:：]\s*/, "追加説明")
+    .replace(/\s+/g, "")
+    .toLowerCase();
 }
 
 function escapeHtml(value) {
@@ -165,17 +221,9 @@ function cleanHeadingTitle(value) {
 
 function extractSections(markdown) {
   const sections = new Map();
-  const text = normalize(markdown);
-  const headingPattern = /^(#{1,3})\s+(.+?)\s*$/gm;
-  const matches = [...text.matchAll(headingPattern)];
+  const matches = extractSectionEntries(markdown);
 
-  for (let index = 0; index < matches.length; index += 1) {
-    const current = matches[index];
-    const next = matches[index + 1];
-    const title = cleanHeadingTitle(current[2]);
-    const start = current.index + current[0].length;
-    const end = next ? next.index : text.length;
-    const body = text.slice(start, end).trim();
+  for (const { title, body } of matches) {
     if (!body) continue;
 
     const previous = sections.get(title);
@@ -183,6 +231,25 @@ function extractSections(markdown) {
   }
 
   return sections;
+}
+
+function extractSectionEntries(markdown) {
+  const text = normalize(markdown);
+  const headingPattern = /^(#{1,3})\s+(.+?)\s*$/gm;
+  const matches = [...text.matchAll(headingPattern)];
+
+  return matches
+    .map((current, index) => {
+      const next = matches[index + 1];
+      const title = cleanHeadingTitle(current[2]);
+      const start = current.index + current[0].length;
+      const end = next ? next.index : text.length;
+      return {
+        title,
+        body: text.slice(start, end).trim(),
+      };
+    })
+    .filter((entry) => entry.body);
 }
 
 function firstSection(sections, names) {
@@ -207,6 +274,57 @@ function splitItems(value, maxItems = 4) {
     .map((item) => compactMarkdown(item, 110))
     .filter(Boolean)
     .slice(0, maxItems);
+}
+
+function classifyLoopEntry(title, body) {
+  const normalizedTitle = normalizeHeading(title);
+
+  for (const [alias, key] of loopHeadingAliases.entries()) {
+    if (normalizedTitle === alias || normalizedTitle.startsWith(alias)) return key;
+  }
+
+  const text = stripMarkdown(`${title}\n${body}`);
+  if (/(最初は|しかし|考え直|見方.*変|修正|正確には|区別|曖昧|取りこぼ)/.test(text)) return "shift";
+  if (/(次に|次回|これから|判断基準|復習|課題候補|使う)/.test(text)) return "future";
+  if (/(わかった|分かった|なるほど|理解|説明でき|気づ|知見|最終文|提出用|結論|本質|法則)/.test(text)) return "insight";
+  if (/(自分では|と思っ|考えた|予想|仮説)/.test(text)) return "hypothesis";
+  if (/(なぜ|どうして|わから|分から|疑問|不思議|問題提起)/.test(text)) return "question";
+  if (/(確認|根拠|調べ|回答|説明|図|画像)/.test(text)) return "check";
+
+  return "";
+}
+
+function buildLearningLoop(entries, phaseModels) {
+  const evidence = new Map(loopSteps.map((step) => [step.key, []]));
+
+  for (const entry of entries) {
+    const key = classifyLoopEntry(entry.title, entry.body);
+    if (!key || !evidence.has(key)) continue;
+
+    const title = compactMarkdown(entry.title, 32);
+    const body = compactMarkdown(entry.body, 150);
+    if (!body) continue;
+    evidence.get(key).push(title ? `${title}: ${body}` : body);
+  }
+
+  return loopSteps.map((step) => {
+    const rawItems = evidence.get(step.key) ?? [];
+    const phaseFallback = phaseModels.find((phase) => phase.key === step.key || (step.key === "future" && phase.key === "criteria"));
+    const fallbackText = phaseFallback?.strength ? phaseFallback.text : "";
+    const items = rawItems.length ? rawItems.slice(0, 3) : fallbackText ? [fallbackText] : [];
+
+    return {
+      ...step,
+      items,
+      text: items.length ? items.join(" / ") : step.empty,
+      status: items.length ? "記録あり" : "これから",
+    };
+  });
+}
+
+function loopText(loop, key) {
+  const step = loop.find((item) => item.key === key);
+  return step?.items?.join("\n") ?? "";
 }
 
 function phaseStrength(rawText) {
@@ -436,6 +554,7 @@ async function loadSource(args) {
 
 function buildReportModel(source) {
   const sections = extractSections(source.markdown);
+  const sectionEntries = extractSectionEntries(source.markdown);
   const title = compactMarkdown(
     firstSection(sections, ["学習テーマ"]) || source.title || extractTitle(source.markdown),
     110,
@@ -458,7 +577,7 @@ function buildReportModel(source) {
   );
   const nextTask = compactMarkdown(firstSection(sections, ["まだ不安なこと", "次の課題候補"]), 180);
 
-  const phaseModels = phases.map((phase) => {
+  const basePhaseModels = phases.map((phase) => {
     const raw = firstSection(sections, phase.sections);
     const strength = phaseStrength(raw);
     return {
@@ -472,15 +591,40 @@ function buildReportModel(source) {
     };
   });
 
+  const learningLoop = buildLearningLoop(sectionEntries, basePhaseModels);
+  const phaseModels = basePhaseModels.map((phase) => {
+    const loopKey = phase.key === "criteria" ? "future" : phase.key;
+    const loopRaw = loopText(learningLoop, loopKey);
+    if (!loopRaw) return phase;
+
+    const combinedRaw = [phase.raw, loopRaw]
+      .filter(Boolean)
+      .filter((value, index, values) => values.indexOf(value) === index)
+      .join("\n\n");
+    const strength = phaseStrength(combinedRaw);
+    return {
+      ...phase,
+      raw: combinedRaw,
+      text: compactMarkdown(combinedRaw, 220),
+      strength,
+      status: strengthLabel(strength),
+      width: strengthWidth(strength),
+      items: splitItems(combinedRaw),
+    };
+  });
   const stage = determineStage(phaseModels, Boolean(goal || firstView || blockers));
   const before = firstView || blockers || phaseModels.find((phase) => phase.key === "question")?.text || "";
   const after =
     firstSection(sections, ["思考の変化"]) ||
     firstSection(sections, ["得た知見", "なるほどポイント", "結論"]) ||
     firstSection(sections, ["次に使える判断基準"]) ||
+    loopText(learningLoop, "shift") ||
+    loopText(learningLoop, "insight") ||
+    loopText(learningLoop, "future") ||
     "";
   const actionItems = [
     ...splitItems(firstSection(sections, ["次に使える判断基準"]), 3),
+    ...splitItems(loopText(learningLoop, "future"), 3),
     ...splitItems(firstSection(sections, ["類題・確認問題の結果", "確認問題の結果", "次の確認問題"]), 2),
     ...splitItems(review || nextTask, 2),
   ].slice(0, 5);
@@ -493,6 +637,7 @@ function buildReportModel(source) {
     review,
     nextTask,
     phases: phaseModels,
+    learningLoop,
     stage,
     before: compactMarkdown(before, 240),
     after: compactMarkdown(after, 240),
@@ -559,6 +704,34 @@ function renderPhaseCards(phasesToRender) {
         )
         .join("")}
     </div>`;
+}
+
+function renderLearningLoop(loop) {
+  return `
+    <section class="loop-board" aria-label="学習者の思考の一周ログ">
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">Learning Loop</span>
+          <h2>一周ごとの考えの進み方</h2>
+        </div>
+        <p>会話やIssueコメントから、学習者が「問い → 予想 → 確かめ → 考え直し → 気づき → これから使う」へ進んだ跡を拾います。</p>
+      </div>
+      <ol class="loop-steps">
+        ${loop
+          .map(
+            (step, index) => `
+              <li class="${step.items.length ? "has-evidence" : "is-empty"}">
+                <span class="loop-index">${index + 1}</span>
+                <div>
+                  <small>${escapeHtml(step.status)}</small>
+                  <h3>${escapeHtml(step.label)} <em>${escapeHtml(step.prompt)}</em></h3>
+                  <p>${escapeHtml(step.text)}</p>
+                </div>
+              </li>`,
+          )
+          .join("")}
+      </ol>
+    </section>`;
 }
 
 function renderActionList(items, fallback) {
@@ -691,6 +864,7 @@ function renderHtml(model) {
     .hero-main,
     .stage-card,
     .phase-card,
+    .loop-board,
     .change-board article,
     .next-card,
     .teacher-note {
@@ -747,6 +921,7 @@ function renderHtml(model) {
     .hero-main p,
     .stage-card p,
     .phase-card p,
+    .loop-steps p,
     .change-board p,
     .teacher-note p {
       color: var(--muted);
@@ -940,6 +1115,75 @@ function renderHtml(model) {
       background: linear-gradient(90deg, var(--teal), var(--yellow), var(--orange));
     }
 
+    .loop-board {
+      margin-top: 18px;
+      padding: 24px;
+      box-shadow: 0 10px 28px rgba(32, 36, 38, 0.1);
+    }
+
+    .loop-board .section-head {
+      margin: 0 0 18px;
+    }
+
+    .loop-steps {
+      list-style: none;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin: 0;
+      padding: 0;
+    }
+
+    .loop-steps li {
+      display: grid;
+      grid-template-columns: 42px minmax(0, 1fr);
+      gap: 12px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: #fffaf0;
+    }
+
+    .loop-steps li.has-evidence {
+      border-left: 6px solid var(--teal);
+    }
+
+    .loop-steps li.is-empty {
+      border-style: dashed;
+      background: #f7f1e5;
+    }
+
+    .loop-index {
+      display: grid;
+      place-items: center;
+      width: 38px;
+      height: 38px;
+      border-radius: 999px;
+      background: var(--blue);
+      color: #fff;
+      font-weight: 900;
+    }
+
+    .loop-steps small {
+      color: var(--green);
+      font-size: 0.75rem;
+      font-weight: 800;
+    }
+
+    .loop-steps h3 {
+      margin: 2px 0 6px;
+      font-size: 1.05rem;
+      line-height: 1.35;
+    }
+
+    .loop-steps h3 em {
+      display: block;
+      color: var(--muted);
+      font-size: 0.82rem;
+      font-style: normal;
+      font-weight: 700;
+    }
+
     .change-board {
       display: grid;
       grid-template-columns: minmax(0, 1fr) 54px minmax(0, 1fr);
@@ -1037,6 +1281,7 @@ function renderHtml(model) {
     @media (max-width: 860px) {
       .hero,
       .phase-grid,
+      .loop-steps,
       .change-board,
       .teacher-note {
         grid-template-columns: 1fr;
@@ -1067,6 +1312,7 @@ function renderHtml(model) {
       .hero-main,
       .stage-card,
       .phase-card,
+      .loop-board,
       .change-board article,
       .next-card,
       .teacher-note {
@@ -1121,6 +1367,8 @@ function renderHtml(model) {
       ${renderPhaseCards(model.phases)}
     </section>
 
+    ${renderLearningLoop(model.learningLoop)}
+
     ${renderBeforeAfter(model)}
 
     <section class="next-card" aria-label="次に使うこと">
@@ -1165,6 +1413,14 @@ function renderMarkdown(model) {
   const actionItems = model.actionItems.length
     ? model.actionItems.map((item) => `- ${item}`).join("\n")
     : `- ${model.stage.next}`;
+  const loopRows = [
+    "| 段階 | 状態 | 拾った内容 |",
+    "| --- | --- | --- |",
+    ...model.learningLoop.map(
+      (step) =>
+        `| ${escapeMarkdownTable(step.label)} | ${escapeMarkdownTable(step.items.length ? "見える" : "これから")} | ${escapeMarkdownTable(step.text)} |`,
+    ),
+  ].join("\n");
 
   return [
     `# 思考深化レポート: ${model.title}`,
@@ -1182,6 +1438,10 @@ function renderMarkdown(model) {
     "## 思考の道すじ",
     "",
     phaseRows,
+    "",
+    "## 一周ごとの考えの進み方",
+    "",
+    loopRows,
     "",
     "## 変化",
     "",
